@@ -122,10 +122,31 @@ header select { background: #45475a; color: #cdd6f4; border: none; padding: 7px 
 }
 .var-flash { animation: flash 0.5s ease-out; }
 
+/* Mobile tab navigation */
+.mobile-tabs { display: none; background: #181825; border-bottom: 2px solid #313244; }
+.mobile-tabs button {
+  background: none; border: none; color: #6c7086; padding: 10px 0; font-family: inherit;
+  font-size: 13px; font-weight: bold; cursor: pointer; flex: 1; text-align: center;
+  border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s;
+}
+.mobile-tabs button.active { color: #89b4fa; border-bottom-color: #89b4fa; }
+
 @media (max-width: 900px) {
-  .main { flex-direction: column; }
-  .editor-pane, .right-pane { border: none; border-bottom: 2px solid #313244; }
-  .right-pane { width: auto; max-height: 200px; }
+  body { height: 100vh; height: 100dvh; }
+  header { padding: 8px 10px; gap: 6px; }
+  header h1 { font-size: 14px; margin-right: 4px; }
+  .btn { padding: 6px 10px; font-size: 12px; }
+  header select { padding: 6px 8px; font-size: 12px; max-width: 120px; }
+  .speed-control { display: none; }
+  .step-counter { font-size: 11px; margin-left: 4px; }
+  .mobile-tabs { display: flex; }
+  .main { flex-direction: column; flex: 1; overflow: hidden; }
+  .editor-pane, .center-pane, .right-pane {
+    border: none; width: auto; flex: 1; min-height: 0; display: none;
+  }
+  .editor-pane.mobile-active, .center-pane.mobile-active, .right-pane.mobile-active {
+    display: flex;
+  }
 }
 </style>
 </head>
@@ -173,6 +194,11 @@ header select { background: #45475a; color: #cdd6f4; border: none; padding: 7px 
   <span class="step-counter" id="stepCounter"></span>
 </header>
 
+<nav class="mobile-tabs" id="mobileTabs">
+  <button class="active" data-tab="editor">Editor</button>
+  <button data-tab="output">Output</button>
+  <button data-tab="state">State</button>
+</nav>
 <div class="main">
   <div class="editor-pane">
     <div class="pane-header">promela</div>
@@ -551,6 +577,7 @@ runBtn.addEventListener('click', () => {
   clearState();
   replayTrace = null;
   replayBtn.style.display = 'none';
+  if (isMobile()) switchMobileTab('output');
   try {
     const ast = compile(editorEl.value);
     currentInterp = new Interpreter(ast, log, 'simulate');
@@ -573,6 +600,7 @@ playBtn.addEventListener('click', () => {
   if (!currentInterp || currentInterp.finished) {
     if (!initInterp()) return;
   }
+  if (isMobile()) switchMobileTab('output');
   setButtonState('playing');
   playTimer = setInterval(doStep, getSpeed());
 });
@@ -598,6 +626,7 @@ verifyBtn.addEventListener('click', () => {
   currentInterp = null;
   replayTrace = null;
   replayBtn.style.display = 'none';
+  if (isMobile()) switchMobileTab('output');
   setButtonState('running');
   try {
     const ast = compile(editorEl.value);
@@ -962,6 +991,32 @@ editorEl.addEventListener('keydown', (e) => {
     editorEl.selectionStart = editorEl.selectionEnd = start + 2;
   }
 });
+
+// Mobile tab switching
+const mobileTabs = document.getElementById('mobileTabs');
+const tabPanes = {
+  editor: document.querySelector('.editor-pane'),
+  output: document.querySelector('.center-pane'),
+  state: document.querySelector('.right-pane'),
+};
+
+function isMobile() { return window.matchMedia('(max-width: 900px)').matches; }
+
+function switchMobileTab(tabName) {
+  for (const btn of mobileTabs.querySelectorAll('button')) {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  }
+  for (const [name, pane] of Object.entries(tabPanes)) {
+    pane.classList.toggle('mobile-active', name === tabName);
+  }
+}
+
+mobileTabs.addEventListener('click', (e) => {
+  if (e.target.dataset.tab) switchMobileTab(e.target.dataset.tab);
+});
+
+// Set initial active tab on mobile
+if (isMobile()) switchMobileTab('editor');
 
 // Keyboard shortcuts (when not in editor)
 document.addEventListener('keydown', (e) => {
