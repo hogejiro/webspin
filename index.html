@@ -122,10 +122,33 @@ header select { background: #45475a; color: #cdd6f4; border: none; padding: 7px 
 }
 .var-flash { animation: flash 0.5s ease-out; }
 
+/* Mobile tab navigation */
+.mobile-tabs { display: none; background: #181825; border-bottom: 2px solid #313244; }
+.mobile-tabs button {
+  background: none; border: none; color: #6c7086; padding: 10px 0; font-family: inherit;
+  font-size: 13px; font-weight: bold; cursor: pointer; flex: 1; text-align: center;
+  border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s;
+}
+.mobile-tabs button.active { color: #89b4fa; border-bottom-color: #89b4fa; }
+
 @media (max-width: 900px) {
-  .main { flex-direction: column; }
-  .editor-pane, .right-pane { border: none; border-bottom: 2px solid #313244; }
-  .right-pane { width: auto; max-height: 200px; }
+  body { height: 100vh; height: 100dvh; overflow: hidden; }
+  header { padding: 8px 10px; gap: 6px; }
+  header h1 { font-size: 14px; margin-right: 4px; }
+  .btn { padding: 6px 10px; font-size: 12px; }
+  header select { padding: 6px 8px; font-size: 12px; max-width: 120px; }
+  .speed-control { display: none; }
+  .step-counter { font-size: 11px; margin-left: 4px; }
+  .mobile-tabs { display: flex; }
+  .main {
+    flex: 1; flex-direction: row; overflow: hidden;
+    transition: transform 0.25s ease-out;
+    width: 300vw;
+  }
+  .editor-pane, .center-pane, .right-pane {
+    border: none; width: 100vw; min-width: 100vw; flex: none; min-height: 0;
+  }
+  .right-pane { max-height: none; }
 }
 </style>
 </head>
@@ -173,6 +196,11 @@ header select { background: #45475a; color: #cdd6f4; border: none; padding: 7px 
   <span class="step-counter" id="stepCounter"></span>
 </header>
 
+<nav class="mobile-tabs" id="mobileTabs">
+  <button class="active" data-tab="editor">Editor</button>
+  <button data-tab="output">Output</button>
+  <button data-tab="state">State</button>
+</nav>
 <div class="main">
   <div class="editor-pane">
     <div class="pane-header">promela</div>
@@ -551,6 +579,7 @@ runBtn.addEventListener('click', () => {
   clearState();
   replayTrace = null;
   replayBtn.style.display = 'none';
+  if (isMobile()) switchMobileTab('output');
   try {
     const ast = compile(editorEl.value);
     currentInterp = new Interpreter(ast, log, 'simulate');
@@ -573,6 +602,7 @@ playBtn.addEventListener('click', () => {
   if (!currentInterp || currentInterp.finished) {
     if (!initInterp()) return;
   }
+  if (isMobile()) switchMobileTab('output');
   setButtonState('playing');
   playTimer = setInterval(doStep, getSpeed());
 });
@@ -598,6 +628,7 @@ verifyBtn.addEventListener('click', () => {
   currentInterp = null;
   replayTrace = null;
   replayBtn.style.display = 'none';
+  if (isMobile()) switchMobileTab('output');
   setButtonState('running');
   try {
     const ast = compile(editorEl.value);
@@ -962,6 +993,71 @@ editorEl.addEventListener('keydown', (e) => {
     editorEl.selectionStart = editorEl.selectionEnd = start + 2;
   }
 });
+
+// Mobile swipe tab switching
+const mobileTabs = document.getElementById('mobileTabs');
+const mainEl = document.querySelector('.main');
+const TAB_NAMES = ['editor', 'output', 'state'];
+let currentTab = 0;
+
+function isMobile() { return window.matchMedia('(max-width: 900px)').matches; }
+
+function switchMobileTab(tabName) {
+  const idx = TAB_NAMES.indexOf(tabName);
+  if (idx < 0) return;
+  currentTab = idx;
+  mainEl.style.transform = `translateX(-${idx * 100}vw)`;
+  for (const btn of mobileTabs.querySelectorAll('button')) {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  }
+}
+
+mobileTabs.addEventListener('click', (e) => {
+  if (e.target.dataset.tab) switchMobileTab(e.target.dataset.tab);
+});
+
+// Touch swipe handling
+let touchStartX = 0;
+let touchStartY = 0;
+let touchDragging = false;
+
+mainEl.addEventListener('touchstart', (e) => {
+  if (!isMobile()) return;
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+  touchDragging = false;
+}, { passive: true });
+
+mainEl.addEventListener('touchmove', (e) => {
+  if (!isMobile()) return;
+  const dx = e.touches[0].clientX - touchStartX;
+  const dy = e.touches[0].clientY - touchStartY;
+  // Only start horizontal drag if movement is more horizontal than vertical
+  if (!touchDragging && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    touchDragging = true;
+  }
+  if (touchDragging) {
+    e.preventDefault();
+    const offset = -currentTab * window.innerWidth + dx;
+    mainEl.style.transition = 'none';
+    mainEl.style.transform = `translateX(${offset}px)`;
+  }
+}, { passive: false });
+
+mainEl.addEventListener('touchend', (e) => {
+  if (!isMobile() || !touchDragging) return;
+  mainEl.style.transition = 'transform 0.25s ease-out';
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  const threshold = window.innerWidth * 0.2;
+  if (dx < -threshold && currentTab < TAB_NAMES.length - 1) {
+    switchMobileTab(TAB_NAMES[currentTab + 1]);
+  } else if (dx > threshold && currentTab > 0) {
+    switchMobileTab(TAB_NAMES[currentTab - 1]);
+  } else {
+    switchMobileTab(TAB_NAMES[currentTab]); // snap back
+  }
+  touchDragging = false;
+}, { passive: true });
 
 // Keyboard shortcuts (when not in editor)
 document.addEventListener('keydown', (e) => {
