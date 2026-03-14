@@ -132,7 +132,7 @@ header select { background: #45475a; color: #cdd6f4; border: none; padding: 7px 
 .mobile-tabs button.active { color: #89b4fa; border-bottom-color: #89b4fa; }
 
 @media (max-width: 900px) {
-  body { height: 100vh; height: 100dvh; }
+  body { height: 100vh; height: 100dvh; overflow: hidden; }
   header { padding: 8px 10px; gap: 6px; }
   header h1 { font-size: 14px; margin-right: 4px; }
   .btn { padding: 6px 10px; font-size: 12px; }
@@ -140,13 +140,15 @@ header select { background: #45475a; color: #cdd6f4; border: none; padding: 7px 
   .speed-control { display: none; }
   .step-counter { font-size: 11px; margin-left: 4px; }
   .mobile-tabs { display: flex; }
-  .main { flex-direction: column; flex: 1; overflow: hidden; }
+  .main {
+    flex: 1; flex-direction: row; overflow: hidden;
+    transition: transform 0.25s ease-out;
+    width: 300vw;
+  }
   .editor-pane, .center-pane, .right-pane {
-    border: none; width: auto; flex: 1; min-height: 0; display: none;
+    border: none; width: 100vw; min-width: 100vw; flex: none; min-height: 0;
   }
-  .editor-pane.mobile-active, .center-pane.mobile-active, .right-pane.mobile-active {
-    display: flex;
-  }
+  .right-pane { max-height: none; }
 }
 </style>
 </head>
@@ -992,22 +994,21 @@ editorEl.addEventListener('keydown', (e) => {
   }
 });
 
-// Mobile tab switching
+// Mobile swipe tab switching
 const mobileTabs = document.getElementById('mobileTabs');
-const tabPanes = {
-  editor: document.querySelector('.editor-pane'),
-  output: document.querySelector('.center-pane'),
-  state: document.querySelector('.right-pane'),
-};
+const mainEl = document.querySelector('.main');
+const TAB_NAMES = ['editor', 'output', 'state'];
+let currentTab = 0;
 
 function isMobile() { return window.matchMedia('(max-width: 900px)').matches; }
 
 function switchMobileTab(tabName) {
+  const idx = TAB_NAMES.indexOf(tabName);
+  if (idx < 0) return;
+  currentTab = idx;
+  mainEl.style.transform = `translateX(-${idx * 100}vw)`;
   for (const btn of mobileTabs.querySelectorAll('button')) {
     btn.classList.toggle('active', btn.dataset.tab === tabName);
-  }
-  for (const [name, pane] of Object.entries(tabPanes)) {
-    pane.classList.toggle('mobile-active', name === tabName);
   }
 }
 
@@ -1015,8 +1016,48 @@ mobileTabs.addEventListener('click', (e) => {
   if (e.target.dataset.tab) switchMobileTab(e.target.dataset.tab);
 });
 
-// Set initial active tab on mobile
-if (isMobile()) switchMobileTab('editor');
+// Touch swipe handling
+let touchStartX = 0;
+let touchStartY = 0;
+let touchDragging = false;
+
+mainEl.addEventListener('touchstart', (e) => {
+  if (!isMobile()) return;
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+  touchDragging = false;
+}, { passive: true });
+
+mainEl.addEventListener('touchmove', (e) => {
+  if (!isMobile()) return;
+  const dx = e.touches[0].clientX - touchStartX;
+  const dy = e.touches[0].clientY - touchStartY;
+  // Only start horizontal drag if movement is more horizontal than vertical
+  if (!touchDragging && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    touchDragging = true;
+  }
+  if (touchDragging) {
+    e.preventDefault();
+    const offset = -currentTab * window.innerWidth + dx;
+    mainEl.style.transition = 'none';
+    mainEl.style.transform = `translateX(${offset}px)`;
+  }
+}, { passive: false });
+
+mainEl.addEventListener('touchend', (e) => {
+  if (!isMobile() || !touchDragging) return;
+  mainEl.style.transition = 'transform 0.25s ease-out';
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  const threshold = window.innerWidth * 0.2;
+  if (dx < -threshold && currentTab < TAB_NAMES.length - 1) {
+    switchMobileTab(TAB_NAMES[currentTab + 1]);
+  } else if (dx > threshold && currentTab > 0) {
+    switchMobileTab(TAB_NAMES[currentTab - 1]);
+  } else {
+    switchMobileTab(TAB_NAMES[currentTab]); // snap back
+  }
+  touchDragging = false;
+}, { passive: true });
 
 // Keyboard shortcuts (when not in editor)
 document.addEventListener('keydown', (e) => {
