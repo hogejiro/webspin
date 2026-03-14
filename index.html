@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web Promela Processor</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Courier New', monospace; background: #1e1e2e; color: #cdd6f4; height: 100vh; display: flex; flex-direction: column; }
+
+/* Header / Toolbar */
+header { background: #313244; padding: 10px 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+header h1 { font-size: 18px; color: #89b4fa; margin-right: 8px; }
+.btn { border: none; padding: 7px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; font-family: inherit; font-size: 13px; transition: background 0.15s; }
+.btn:hover { filter: brightness(1.1); }
+.btn-run { background: #a6e3a1; color: #1e1e2e; }
+.btn-verify { background: #89b4fa; color: #1e1e2e; }
+.btn-step { background: #fab387; color: #1e1e2e; }
+.btn-stop { background: #f38ba8; color: #1e1e2e; }
+.btn:disabled { opacity: 0.4; cursor: default; filter: none; }
+header select { background: #45475a; color: #cdd6f4; border: none; padding: 7px 12px; border-radius: 6px; font-family: inherit; font-size: 13px; }
+.speed-control { display: flex; align-items: center; gap: 6px; margin-left: 8px; }
+.speed-control label { font-size: 12px; color: #a6adc8; }
+.speed-control input[type=range] { width: 80px; accent-color: #89b4fa; }
+.speed-val { font-size: 12px; color: #89b4fa; min-width: 40px; }
+.step-counter { font-size: 12px; color: #a6adc8; margin-left: auto; }
+
+/* Main layout: 3-column */
+.main { display: flex; flex: 1; overflow: hidden; }
+.editor-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; border-right: 2px solid #313244; }
+.center-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.right-pane { width: 280px; min-width: 200px; display: flex; flex-direction: column; border-left: 2px solid #313244; overflow: hidden; }
+
+.pane-header { background: #313244; padding: 5px 14px; font-size: 12px; color: #a6adc8; text-transform: uppercase; letter-spacing: 1px; flex-shrink: 0; }
+/* Syntax-highlighted editor: overlay textarea on top of highlighted pre */
+.editor-wrap { position: relative; flex: 1; overflow: hidden; }
+.editor-highlight, .editor-wrap textarea {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  padding: 14px; font-family: 'Courier New', monospace; font-size: 14px;
+  line-height: 1.45; tab-size: 2; white-space: pre-wrap; word-wrap: break-word;
+  border: none; margin: 0; overflow-y: auto;
+}
+.editor-highlight {
+  background: #1e1e2e; color: #cdd6f4; pointer-events: none; z-index: 0;
+}
+.editor-wrap textarea {
+  background: transparent; color: transparent; caret-color: #cdd6f4;
+  z-index: 1; resize: none; outline: none; -webkit-text-fill-color: transparent;
+}
+.editor-wrap textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+.editor-wrap textarea::selection { background: rgba(137,180,250,0.3); }
+
+/* Syntax highlight token colors */
+.hl-keyword { color: #cba6f7; font-weight: bold; }
+.hl-type { color: #89b4fa; }
+.hl-number { color: #fab387; }
+.hl-string { color: #a6e3a1; }
+.hl-comment { color: #6c7086; font-style: italic; }
+.hl-operator { color: #89dceb; }
+.hl-builtin { color: #f9e2af; }
+.hl-define { color: #f38ba8; }
+#output { flex: 1; padding: 12px 14px; overflow-y: auto; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+
+/* Output colors */
+.log-print { color: #a6e3a1; }
+.log-error { color: #f38ba8; }
+.log-info { color: #89b4fa; }
+.log-warn { color: #fab387; }
+
+/* Right pane sections */
+.state-section { padding: 10px 14px; border-bottom: 1px solid #313244; }
+.state-section h3 { font-size: 11px; color: #a6adc8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.right-pane-scroll { flex: 1; overflow-y: auto; }
+
+/* Process list */
+.proc-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+.proc-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; transition: all 0.15s; }
+.proc-dot.running { background: #a6e3a1; box-shadow: 0 0 6px #a6e3a1; }
+.proc-dot.blocked { background: #fab387; }
+.proc-dot.done { background: #585b70; }
+.proc-dot.active { background: #f9e2af; box-shadow: 0 0 8px #f9e2af; animation: pulse 0.4s ease-out; }
+.proc-name { flex: 1; }
+.proc-status { font-size: 11px; color: #585b70; }
+
+/* Variable table */
+.var-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.var-table td { padding: 2px 0; }
+.var-table td:first-child { color: #cba6f7; padding-right: 10px; }
+.var-table td:last-child { color: #f9e2af; font-variant-numeric: tabular-nums; }
+
+/* Channel display */
+.chan-item { margin-bottom: 6px; font-size: 12px; }
+.chan-name { color: #94e2d5; }
+.chan-buf { display: flex; gap: 3px; margin-top: 2px; }
+.chan-slot { width: 24px; height: 20px; border: 1px solid #45475a; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #f9e2af; }
+.chan-slot.empty { border-style: dashed; color: #45475a; }
+.chan-slot.filled { background: #45475a; }
+
+/* Trace area */
+.trace-area { flex: 1; overflow-y: auto; padding: 10px 14px; font-size: 12px; }
+.trace-entry { padding: 1px 0; }
+.trace-entry .t-step { color: #585b70; display: inline-block; min-width: 36px; }
+.trace-entry .t-proc { font-weight: bold; }
+
+/* Process color coding */
+.pc0 { color: #a6e3a1; }
+.pc1 { color: #89b4fa; }
+.pc2 { color: #f9e2af; }
+.pc3 { color: #f38ba8; }
+.pc4 { color: #cba6f7; }
+.pc5 { color: #94e2d5; }
+.pc6 { color: #fab387; }
+.pc7 { color: #eba0ac; }
+
+@keyframes pulse {
+  0% { transform: scale(1.8); }
+  100% { transform: scale(1); }
+}
+@keyframes flash {
+  0% { background: #45475a; }
+  100% { background: transparent; }
+}
+.var-flash { animation: flash 0.5s ease-out; }
+
+@media (max-width: 900px) {
+  .main { flex-direction: column; }
+  .editor-pane, .right-pane { border: none; border-bottom: 2px solid #313244; }
+  .right-pane { width: auto; max-height: 200px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Web Promela</h1>
+  <button class="btn btn-run" id="runBtn" title="Run to completion">Run</button>
+  <button class="btn btn-step" id="playBtn" title="Animate step-by-step">Play</button>
+  <button class="btn btn-step" id="stepBtn" title="Single step">Step</button>
+  <button class="btn btn-stop" id="stopBtn" title="Stop" disabled>Stop</button>
+  <button class="btn btn-verify" id="verifyBtn" title="Random verification">Verify</button>
+  <button class="btn btn-step" id="replayBtn" title="Replay counter-example" style="display:none">Replay</button>
+  <div class="speed-control">
+    <label>Speed</label>
+    <input type="range" id="speedSlider" min="0" max="4" step="1" value="2">
+    <span class="speed-val" id="speedVal">100ms</span>
+  </div>
+  <select id="examples">
+    <option value="">-- Examples --</option>
+    <option value="hello">Hello World</option>
+    <option value="counter">Shared Counter</option>
+    <option value="chan">Channel Messaging</option>
+    <option value="mutex">Mutex (Peterson)</option>
+    <option value="broken_mutex">Broken Mutex (race!)</option>
+    <option value="atomic_mutex">Atomic Mutex (fixed)</option>
+    <option value="dining">Dining Philosophers (deadlock)</option>
+    <option value="dining_fixed">Dining Philosophers (fixed)</option>
+    <option value="producer">Producer-Consumer</option>
+    <option value="elevator">Elevator Controller</option>
+    <option value="abp">Alternating Bit Protocol</option>
+    <option value="run_workers">Dynamic Process (run)</option>
+    <option value="goto_statemachine">State Machine (goto)</option>
+    <option value="protocol">Client-Server Protocol</option>
+    <option value="rendezvous">Rendezvous Channel (sync)</option>
+    <option value="rv_deadlock">Rendezvous Deadlock</option>
+    <option value="chan_query">Channel Queries (len/empty/full)</option>
+    <option value="flow_control">Flow Control (nfull/nempty)</option>
+    <option disabled>── LTL Properties ──</option>
+    <option value="ltl_safety">LTL: Safety ([] count >= -1)</option>
+    <option value="ltl_liveness">LTL: Liveness (<> done)</option>
+    <option value="ltl_response">LTL: Response (req -> ack)</option>
+    <option value="ltl_violation">LTL: Violation Demo</option>
+  </select>
+  <span class="step-counter" id="stepCounter"></span>
+</header>
+
+<div class="main">
+  <div class="editor-pane">
+    <div class="pane-header">promela</div>
+    <div class="editor-wrap">
+      <pre class="editor-highlight" id="highlight" aria-hidden="true"></pre>
+      <textarea id="editor" spellcheck="false">/* Hello World in Promela */
+active proctype hello() {
+  printf("Hello, Promela!\n")
+}
+
+active proctype world() {
+  printf("World process running\n")
+}
+</textarea>
+    </div>
+  </div>
+  <div class="center-pane">
+    <div class="pane-header">output</div>
+    <div id="output"></div>
+  </div>
+  <div class="right-pane">
+    <div class="pane-header">state</div>
+    <div class="right-pane-scroll">
+      <div class="state-section" id="procSection">
+        <h3>Processes</h3>
+        <div id="procList"></div>
+      </div>
+      <div class="state-section" id="varSection">
+        <h3>Variables</h3>
+        <table class="var-table" id="varTable"><tbody></tbody></table>
+      </div>
+      <div class="state-section" id="chanSection">
+        <h3>Channels</h3>
+        <div id="chanList"></div>
+      </div>
+      <div class="state-section" style="border-bottom:none; flex:1; display:flex; flex-direction:column;">
+        <h3>Trace</h3>
+        <div class="trace-area" id="traceArea"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { tokenize, preprocess } from './lexer.js';
+import { Parser } from './parser.js';
+import { Interpreter } from './interpreter.js';
+import { ExhaustiveVerifier } from './verifier.js';
+import { EXAMPLES } from './examples.js';
+
+const outputEl = document.getElementById('output');
+const editorEl = document.getElementById('editor');
+const highlightEl = document.getElementById('highlight');
+
+// Syntax highlighting
+const HL_KEYWORDS = new Set([
+  'proctype','active','init','atomic','d_step',
+  'if','fi','do','od','else','break','goto','skip',
+  'true','false','timeout','ltl',
+]);
+const HL_TYPES = new Set(['int','bool','byte','short','chan','mtype','of']);
+const HL_BUILTINS = new Set(['printf','assert','run','len','empty','full','nfull','nempty']);
+
+function highlightCode(src) {
+  // Tokenize for highlighting (simpler than lexer - just regex-based coloring)
+  let result = '';
+  let i = 0;
+  while (i < src.length) {
+    // Block comments
+    if (src[i] === '/' && src[i+1] === '*') {
+      let end = src.indexOf('*/', i + 2);
+      if (end === -1) end = src.length - 2;
+      result += '<span class="hl-comment">' + escHtml(src.slice(i, end + 2)) + '</span>';
+      i = end + 2;
+      continue;
+    }
+    // Line comments
+    if (src[i] === '/' && src[i+1] === '/') {
+      let end = src.indexOf('\n', i);
+      if (end === -1) end = src.length;
+      result += '<span class="hl-comment">' + escHtml(src.slice(i, end)) + '</span>';
+      i = end;
+      continue;
+    }
+    // Strings
+    if (src[i] === '"') {
+      let j = i + 1;
+      while (j < src.length && src[j] !== '"') {
+        if (src[j] === '\\') j++;
+        j++;
+      }
+      result += '<span class="hl-string">' + escHtml(src.slice(i, j + 1)) + '</span>';
+      i = j + 1;
+      continue;
+    }
+    // #define
+    if (src[i] === '#') {
+      let end = src.indexOf('\n', i);
+      if (end === -1) end = src.length;
+      result += '<span class="hl-define">' + escHtml(src.slice(i, end)) + '</span>';
+      i = end;
+      continue;
+    }
+    // Numbers
+    if (/\d/.test(src[i])) {
+      let j = i;
+      while (j < src.length && /\d/.test(src[j])) j++;
+      result += '<span class="hl-number">' + escHtml(src.slice(i, j)) + '</span>';
+      i = j;
+      continue;
+    }
+    // Identifiers / keywords
+    if (/[a-zA-Z_]/.test(src[i])) {
+      let j = i;
+      while (j < src.length && /[a-zA-Z0-9_]/.test(src[j])) j++;
+      const word = src.slice(i, j);
+      if (HL_KEYWORDS.has(word)) {
+        result += '<span class="hl-keyword">' + escHtml(word) + '</span>';
+      } else if (HL_TYPES.has(word)) {
+        result += '<span class="hl-type">' + escHtml(word) + '</span>';
+      } else if (HL_BUILTINS.has(word)) {
+        result += '<span class="hl-builtin">' + escHtml(word) + '</span>';
+      } else {
+        result += escHtml(word);
+      }
+      i = j;
+      continue;
+    }
+    // Operators
+    if ('!?=<>&|+-*/%^~'.includes(src[i])) {
+      result += '<span class="hl-operator">' + escHtml(src[i]) + '</span>';
+      i++;
+      continue;
+    }
+    // Everything else (braces, parens, semicolons, whitespace, etc.)
+    result += escHtml(src[i]);
+    i++;
+  }
+  // Add trailing newline so pre height matches textarea
+  return result + '\n';
+}
+
+function escHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function syncHighlight() {
+  highlightEl.innerHTML = highlightCode(editorEl.value);
+  highlightEl.scrollTop = editorEl.scrollTop;
+  highlightEl.scrollLeft = editorEl.scrollLeft;
+}
+
+editorEl.addEventListener('input', syncHighlight);
+editorEl.addEventListener('scroll', () => {
+  highlightEl.scrollTop = editorEl.scrollTop;
+  highlightEl.scrollLeft = editorEl.scrollLeft;
+});
+// Initial highlight
+syncHighlight();
+const procList = document.getElementById('procList');
+const varTable = document.getElementById('varTable').querySelector('tbody');
+const chanList = document.getElementById('chanList');
+const traceArea = document.getElementById('traceArea');
+const stepCounter = document.getElementById('stepCounter');
+const speedSlider = document.getElementById('speedSlider');
+const speedVal = document.getElementById('speedVal');
+const runBtn = document.getElementById('runBtn');
+const playBtn = document.getElementById('playBtn');
+const stepBtn = document.getElementById('stepBtn');
+const stopBtn = document.getElementById('stopBtn');
+const verifyBtn = document.getElementById('verifyBtn');
+const replayBtn = document.getElementById('replayBtn');
+
+const SPEEDS = [500, 200, 100, 30, 5];
+const SPEED_LABELS = ['500ms', '200ms', '100ms', '30ms', '5ms'];
+
+let currentInterp = null;
+let playTimer = null;
+let prevVars = {};
+let replayTrace = null;  // stored counter-example trace for replay
+let replayPos = 0;
+let replayTimer = null;
+
+function getSpeed() { return SPEEDS[speedSlider.value]; }
+speedSlider.addEventListener('input', () => {
+  speedVal.textContent = SPEED_LABELS[speedSlider.value];
+  // If playing, restart timer with new speed
+  if (playTimer) {
+    clearInterval(playTimer);
+    playTimer = setInterval(doStep, getSpeed());
+  }
+});
+
+function clearOutput() { outputEl.innerHTML = ''; }
+function clearState() {
+  procList.innerHTML = '';
+  varTable.innerHTML = '';
+  chanList.innerHTML = '';
+  traceArea.innerHTML = '';
+  stepCounter.textContent = '';
+  prevVars = {};
+}
+
+function log(msg, cls = 'log-info') {
+  const span = document.createElement('span');
+  span.className = cls;
+  span.textContent = msg + '\n';
+  outputEl.appendChild(span);
+  outputEl.scrollTop = outputEl.scrollHeight;
+}
+
+function compile(source) {
+  const tokens = tokenize(preprocess(source));
+  return new Parser(tokens).parse();
+}
+
+function procColor(pid) { return `pc${pid % 8}`; }
+
+function updateStatePanel(activeEntry) {
+  if (!currentInterp) return;
+  const state = currentInterp.getState();
+
+  stepCounter.textContent = `Step ${state.step}${state.finished ? (state.deadlocked ? ' | DEADLOCK' : ' | Done') : ''}`;
+
+  // Processes
+  procList.innerHTML = '';
+  for (const p of state.processes) {
+    const div = document.createElement('div');
+    div.className = 'proc-item';
+    const dot = document.createElement('span');
+    dot.className = 'proc-dot';
+    if (p.done) dot.classList.add('done');
+    else if (p.blocked) dot.classList.add('blocked');
+    else if (activeEntry && activeEntry.pid === p.pid) dot.classList.add('active');
+    else dot.classList.add('running');
+    const name = document.createElement('span');
+    name.className = `proc-name ${procColor(p.pid)}`;
+    name.textContent = p.name;
+    const status = document.createElement('span');
+    status.className = 'proc-status';
+    status.textContent = p.done ? 'done' : p.blocked ? 'blocked' : 'ready';
+    div.appendChild(dot);
+    div.appendChild(name);
+    div.appendChild(status);
+    procList.appendChild(div);
+  }
+
+  // Variables
+  const newVars = {};
+  varTable.innerHTML = '';
+  for (const [name, val] of Object.entries(state.vars)) {
+    const tr = document.createElement('tr');
+    const displayVal = Array.isArray(val) ? `[${val.join(', ')}]` : String(val);
+    const changed = prevVars[name] !== undefined && JSON.stringify(prevVars[name]) !== JSON.stringify(val);
+    const tdName = document.createElement('td');
+    tdName.textContent = name;
+    const tdVal = document.createElement('td');
+    tdVal.textContent = displayVal;
+    tr.appendChild(tdName);
+    tr.appendChild(tdVal);
+    if (changed) tr.classList.add('var-flash');
+    varTable.appendChild(tr);
+    newVars[name] = val;
+  }
+  prevVars = newVars;
+
+  // Channels
+  chanList.innerHTML = '';
+  for (const [name, ch] of Object.entries(state.channels)) {
+    const div = document.createElement('div');
+    div.className = 'chan-item';
+    const label = document.createElement('span');
+    label.className = 'chan-name';
+    label.textContent = `${name} [${ch.size}]: `;
+    div.appendChild(label);
+    const bufDiv = document.createElement('div');
+    bufDiv.className = 'chan-buf';
+    for (let i = 0; i < ch.size; i++) {
+      const slot = document.createElement('span');
+      slot.className = 'chan-slot';
+      if (i < ch.buf.length) {
+        slot.classList.add('filled');
+        slot.textContent = Array.isArray(ch.buf[i]) ? ch.buf[i].join(',') : ch.buf[i];
+      } else {
+        slot.classList.add('empty');
+      }
+      bufDiv.appendChild(slot);
+    }
+    div.appendChild(bufDiv);
+    chanList.appendChild(div);
+  }
+
+  // Trace entry
+  if (activeEntry && activeEntry.type === 'step') {
+    const STMT_LABELS = {
+      Assign: 'assign', Send: 'ch!', Recv: 'ch?', Printf: 'printf',
+      Assert: 'assert', If: 'if', Do: 'do', Break: 'break',
+      Decl: 'decl', ChanDecl: 'chan', ExprStmt: 'expr',
+      Skip: '', _DoMarker: '',
+    };
+    const label = STMT_LABELS[activeEntry.stmt] ?? activeEntry.stmt;
+    if (label) {
+      const div = document.createElement('div');
+      div.className = 'trace-entry';
+      const stepSpan = document.createElement('span');
+      stepSpan.className = 't-step';
+      stepSpan.textContent = activeEntry.step;
+      const procSpan = document.createElement('span');
+      procSpan.className = `t-proc ${procColor(activeEntry.pid)}`;
+      procSpan.textContent = activeEntry.name;
+      const stmtSpan = document.createElement('span');
+      stmtSpan.style.color = '#585b70';
+      stmtSpan.textContent = ` ${label}`;
+      div.appendChild(stepSpan);
+      div.appendChild(procSpan);
+      div.appendChild(stmtSpan);
+      traceArea.appendChild(div);
+      traceArea.scrollTop = traceArea.scrollHeight;
+    }
+  }
+}
+
+function setButtonState(mode) {
+  // mode: 'idle' | 'stepping' | 'playing' | 'running'
+  runBtn.disabled = mode !== 'idle';
+  playBtn.disabled = mode === 'playing' || mode === 'running';
+  stepBtn.disabled = mode === 'playing' || mode === 'running';
+  verifyBtn.disabled = mode !== 'idle';
+  stopBtn.disabled = mode === 'idle';
+  editorEl.disabled = mode !== 'idle';
+  playBtn.textContent = mode === 'playing' ? 'Pause' : 'Play';
+  if (mode === 'playing') {
+    playBtn.disabled = false; // allow pause
+  }
+}
+
+function initInterp() {
+  clearOutput();
+  clearState();
+  try {
+    const ast = compile(editorEl.value);
+    currentInterp = new Interpreter(ast, log, 'simulate');
+    currentInterp.init();
+    updateStatePanel(null);
+    return true;
+  } catch (e) {
+    log(`Error: ${e.message}`, 'log-error');
+    currentInterp = null;
+    return false;
+  }
+}
+
+function doStep() {
+  if (!currentInterp || currentInterp.finished || currentInterp.stopped) {
+    stopExecution();
+    return;
+  }
+  const entry = currentInterp.stepOnce();
+  updateStatePanel(entry);
+  if (!entry || currentInterp.finished) {
+    stopExecution();
+  }
+}
+
+function stopExecution() {
+  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  if (replayTimer) { clearInterval(replayTimer); replayTimer = null; replayBtn.textContent = 'Replay'; replayBtn.style.display = replayTrace ? '' : 'none'; }
+  if (currentInterp) currentInterp.stop();
+  setButtonState('idle');
+  editorEl.disabled = false;
+}
+
+// Run to completion (instant)
+runBtn.addEventListener('click', () => {
+  clearOutput();
+  clearState();
+  replayTrace = null;
+  replayBtn.style.display = 'none';
+  try {
+    const ast = compile(editorEl.value);
+    currentInterp = new Interpreter(ast, log, 'simulate');
+    currentInterp.run();
+    updateStatePanel(null);
+  } catch (e) {
+    log(`Error: ${e.message}`, 'log-error');
+  }
+});
+
+// Play / Pause toggle
+playBtn.addEventListener('click', () => {
+  if (playTimer) {
+    // Pause
+    clearInterval(playTimer);
+    playTimer = null;
+    setButtonState('stepping');
+    return;
+  }
+  if (!currentInterp || currentInterp.finished) {
+    if (!initInterp()) return;
+  }
+  setButtonState('playing');
+  playTimer = setInterval(doStep, getSpeed());
+});
+
+// Single step
+stepBtn.addEventListener('click', () => {
+  if (!currentInterp || currentInterp.finished) {
+    if (!initInterp()) return;
+    setButtonState('stepping');
+    return;
+  }
+  setButtonState('stepping');
+  doStep();
+});
+
+// Stop
+stopBtn.addEventListener('click', stopExecution);
+
+// Verify (exhaustive state-space search, async)
+verifyBtn.addEventListener('click', () => {
+  clearOutput();
+  clearState();
+  currentInterp = null;
+  replayTrace = null;
+  replayBtn.style.display = 'none';
+  setButtonState('running');
+  try {
+    const ast = compile(editorEl.value);
+    new ExhaustiveVerifier(ast, log).verifyAsync(
+      (result) => {
+        setButtonState('idle');
+        if (result.errors.length > 0) {
+          const error = result.errors[0];
+          drawTraceCanvas(error);
+          if (error.trace && error.trace.length > 0) {
+            replayTrace = error;
+            replayBtn.style.display = '';
+          }
+        }
+      },
+      (explored, unique) => {
+        stepCounter.textContent = `Verifying: ${explored} states (${unique} unique)`;
+      }
+    );
+  } catch (e) {
+    log(`Error: ${e.message}`, 'log-error');
+    setButtonState('idle');
+  }
+});
+
+// Replay counter-example trace step by step
+replayBtn.addEventListener('click', () => {
+  if (replayTimer) {
+    // Pause
+    clearInterval(replayTimer);
+    replayTimer = null;
+    replayBtn.textContent = 'Replay';
+    setButtonState('idle');
+    replayBtn.style.display = '';
+    return;
+  }
+
+  if (!replayTrace || !replayTrace.trace || replayTrace.trace.length === 0) return;
+  const trace = replayTrace.trace;
+
+  // Reset state
+  clearOutput();
+  clearState();
+  currentInterp = null;
+  replayPos = 0;
+  prevVars = {};
+
+  log('=== Replaying counter-example ===', 'log-info');
+  if (replayTrace.type === 'deadlock') {
+    log(`Trace leads to DEADLOCK (${trace.length} steps)`, 'log-warn');
+  } else if (replayTrace.type === 'assertion') {
+    log(`Trace leads to: ${replayTrace.message} (${trace.length} steps)`, 'log-warn');
+  }
+  log('', 'log-info');
+
+  replayBtn.textContent = 'Pause';
+  setButtonState('running');
+  replayBtn.style.display = '';
+  replayBtn.disabled = false;
+  stopBtn.disabled = false;
+
+  const doReplayStep = () => {
+    if (replayPos >= trace.length) {
+      clearInterval(replayTimer);
+      replayTimer = null;
+      // Show final error
+      if (replayTrace.type === 'deadlock') {
+        log('\n*** DEADLOCK ***', 'log-error');
+      } else if (replayTrace.type === 'assertion') {
+        log(`\n*** ${replayTrace.message} ***`, 'log-error');
+      }
+      replayBtn.textContent = 'Replay';
+      setButtonState('idle');
+      replayBtn.style.display = '';
+      return;
+    }
+
+    const t = trace[replayPos];
+    replayPos++;
+
+    // Log the step
+    const desc = t.desc || t.insn || '?';
+    log(`[${t.procName}] ${desc}`, 'log-print');
+
+    // Update step counter
+    stepCounter.textContent = `Replay: step ${replayPos}/${trace.length}`;
+
+    // Update variables panel
+    if (t.varsAfter) {
+      const newVars = {};
+      varTable.innerHTML = '';
+      for (const [name, val] of Object.entries(t.varsAfter)) {
+        if (name.startsWith('ch:')) continue;
+        const displayVal = Array.isArray(val) ? `[${val.join(', ')}]` : String(val);
+        const changed = prevVars[name] !== undefined && JSON.stringify(prevVars[name]) !== JSON.stringify(val);
+        const tr = document.createElement('tr');
+        const tdName = document.createElement('td');
+        tdName.textContent = name;
+        const tdVal = document.createElement('td');
+        tdVal.textContent = displayVal;
+        tr.appendChild(tdName);
+        tr.appendChild(tdVal);
+        if (changed) tr.classList.add('var-flash');
+        varTable.appendChild(tr);
+        newVars[name] = val;
+      }
+      prevVars = newVars;
+    }
+
+    // Update process panel
+    if (trace.procNames) {
+      procList.innerHTML = '';
+      for (let pi = 0; pi < trace.procNames.length; pi++) {
+        const pn = trace.procNames[pi];
+        const div = document.createElement('div');
+        div.className = 'proc-item';
+        const dot = document.createElement('span');
+        dot.className = 'proc-dot';
+        if (t.procName === pn) { dot.classList.add('active'); dot.style.animation = 'pulse 0.3s'; }
+        else dot.classList.add('running');
+        const nameSpan = document.createElement('span');
+        nameSpan.className = `proc-name pc${pi % 8}`;
+        nameSpan.textContent = pn;
+        div.appendChild(dot);
+        div.appendChild(nameSpan);
+        procList.appendChild(div);
+      }
+    }
+
+    // Trace entry in right panel
+    const trDiv = document.createElement('div');
+    trDiv.className = 'trace-entry';
+    const stepSpan = document.createElement('span');
+    stepSpan.className = 't-step';
+    stepSpan.textContent = replayPos;
+    const procSpan = document.createElement('span');
+    const pi = trace.procNames ? trace.procNames.indexOf(t.procName) : 0;
+    procSpan.className = `t-proc pc${pi % 8}`;
+    procSpan.textContent = t.procName;
+    const stmtSpan = document.createElement('span');
+    stmtSpan.style.color = '#585b70';
+    stmtSpan.textContent = ` ${desc.length > 30 ? desc.slice(0, 30) + '...' : desc}`;
+    trDiv.appendChild(stepSpan);
+    trDiv.appendChild(procSpan);
+    trDiv.appendChild(stmtSpan);
+    traceArea.appendChild(trDiv);
+    traceArea.scrollTop = traceArea.scrollHeight;
+  };
+
+  replayTimer = setInterval(doReplayStep, getSpeed());
+});
+
+
+// Canvas trace visualization
+function drawTraceCanvas(error) {
+  const trace = error.trace;
+  if (!trace || trace.length === 0) return;
+
+  const procNames = trace.procNames || [...new Set(trace.map(t => t.procName))];
+  const procIdx = {};
+  procNames.forEach((n, i) => { procIdx[n] = i; });
+  const nProcs = procNames.length;
+
+  // Color palette (same as process colors in CSS)
+  const COLORS = ['#a6e3a1','#89b4fa','#f9e2af','#f38ba8','#cba6f7','#94e2d5','#fab387','#eba0ac'];
+
+  // Layout
+  const colW = 140;
+  const rowH = 40;
+  const padTop = 50;
+  const padLeft = 20;
+  const padRight = 160; // room for variable annotations
+  const padBottom = 40;
+  const W = padLeft + nProcs * colW + padRight;
+  const H = padTop + (trace.length + 1) * rowH + padBottom;
+  const dpr = window.devicePixelRatio || 1;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  canvas.style.display = 'block';
+  canvas.style.margin = '10px 0';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  // Background
+  ctx.fillStyle = '#1e1e2e';
+  ctx.fillRect(0, 0, W, H);
+
+  // Column x positions
+  function colX(i) { return padLeft + i * colW + colW / 2; }
+
+  // Draw process name headers
+  ctx.font = 'bold 13px Courier New';
+  ctx.textAlign = 'center';
+  for (let i = 0; i < nProcs; i++) {
+    ctx.fillStyle = COLORS[i % COLORS.length];
+    ctx.fillText(procNames[i], colX(i), 20);
+  }
+
+  // Draw vertical lifelines
+  for (let i = 0; i < nProcs; i++) {
+    ctx.strokeStyle = '#45475a';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(colX(i), 30);
+    ctx.lineTo(colX(i), padTop + (trace.length + 0.5) * rowH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Match Send/Recv pairs: for each Send, find the next Recv on the same channel
+  const sendRecvPairs = []; // { sendStep, recvStep }
+  const pendingSends = {}; // chanName -> [stepIdx, ...]
+  for (let s = 0; s < trace.length; s++) {
+    const t = trace[s];
+    if (!t || !t.chanName) continue;
+    if (t.insn === 'Send') {
+      if (!pendingSends[t.chanName]) pendingSends[t.chanName] = [];
+      pendingSends[t.chanName].push(s);
+    } else if (t.insn === 'Recv') {
+      const pending = pendingSends[t.chanName];
+      if (pending && pending.length > 0) {
+        sendRecvPairs.push({ sendStep: pending.shift(), recvStep: s });
+      }
+    }
+  }
+
+  // Draw each step (dots, labels, var changes)
+  ctx.font = '12px Courier New';
+  for (let s = 0; s < trace.length; s++) {
+    const t = trace[s];
+    if (!t) continue;
+    const pi = procIdx[t.procName];
+    const y = padTop + s * rowH + rowH / 2;
+    const x = colX(pi);
+    const color = COLORS[pi % COLORS.length];
+    const isError = s === trace.length - 1 && (error.type === 'assertion' || error.type === 'deadlock');
+
+    // Step number on the left
+    ctx.fillStyle = '#585b70';
+    ctx.textAlign = 'right';
+    ctx.fillText(s + 1, padLeft - 6, y + 4);
+
+    // Active dot
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fillStyle = isError ? '#f38ba8' : color;
+    ctx.fill();
+    if (isError) {
+      ctx.strokeStyle = '#f38ba8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, 10, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Instruction label
+    const label = t.desc || t.insn;
+    ctx.fillStyle = color;
+    ctx.textAlign = 'left';
+    ctx.fillText(label, x + 14, y + 4);
+
+    // Variable changes annotation (right side)
+    if (t.changes && Object.keys(t.changes).length > 0) {
+      const changeStrs = [];
+      for (const [k, v] of Object.entries(t.changes)) {
+        if (k.startsWith('ch:')) continue;
+        const display = Array.isArray(v) ? `[${v}]` : v;
+        changeStrs.push(`${k}=${display}`);
+      }
+      if (changeStrs.length > 0) {
+        ctx.fillStyle = '#f9e2af';
+        ctx.textAlign = 'left';
+        const annotX = padLeft + nProcs * colW + 10;
+        ctx.fillText(changeStrs.join(', '), annotX, y + 4);
+      }
+    }
+  }
+
+  // Draw Send->Recv arrows between processes
+  for (const pair of sendRecvPairs) {
+    const send = trace[pair.sendStep];
+    const recv = trace[pair.recvStep];
+    if (!send || !recv) continue;
+    const spi = procIdx[send.procName];
+    const rpi = procIdx[recv.procName];
+    const sy = padTop + pair.sendStep * rowH + rowH / 2;
+    const ry = padTop + pair.recvStep * rowH + rowH / 2;
+    const sx = colX(spi);
+    const rx = colX(rpi);
+
+    // Arrow from sender to receiver
+    ctx.strokeStyle = '#94e2d5';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(rx, ry);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Arrowhead at receiver end
+    const angle = Math.atan2(ry - sy, rx - sx);
+    const headLen = 8;
+    ctx.beginPath();
+    ctx.moveTo(rx - headLen * Math.cos(angle - 0.4), ry - headLen * Math.sin(angle - 0.4));
+    ctx.lineTo(rx, ry);
+    ctx.lineTo(rx - headLen * Math.cos(angle + 0.4), ry - headLen * Math.sin(angle + 0.4));
+    ctx.strokeStyle = '#94e2d5';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Channel name label on the arrow
+    const midX = (sx + rx) / 2;
+    const midY = (sy + ry) / 2;
+    ctx.fillStyle = '#94e2d5';
+    ctx.font = '10px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(send.chanName, midX + (rx > sx ? -10 : 10), midY - 6);
+    ctx.font = '12px Courier New';
+  }
+
+  // Error label at bottom
+  const lastY = padTop + trace.length * rowH + rowH / 2;
+  ctx.fillStyle = '#f38ba8';
+  ctx.font = 'bold 13px Courier New';
+  ctx.textAlign = 'center';
+  if (error.type === 'assertion') {
+    ctx.fillText('ASSERTION FAILED', W / 2, lastY);
+  } else if (error.type === 'deadlock') {
+    ctx.fillText('DEADLOCK', W / 2, lastY);
+  }
+
+  outputEl.appendChild(canvas);
+  outputEl.scrollTop = outputEl.scrollHeight;
+}
+
+// Examples
+document.getElementById('examples').addEventListener('change', (e) => {
+  if (EXAMPLES[e.target.value]) {
+    stopExecution();
+    currentInterp = null;
+    clearOutput();
+    clearState();
+    editorEl.value = EXAMPLES[e.target.value];
+    syncHighlight();
+    setButtonState('idle');
+  }
+});
+
+// Tab key inserts spaces in editor
+editorEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const start = editorEl.selectionStart;
+    const end = editorEl.selectionEnd;
+    editorEl.value = editorEl.value.substring(0, start) + '  ' + editorEl.value.substring(end);
+    editorEl.selectionStart = editorEl.selectionEnd = start + 2;
+  }
+});
+
+// Keyboard shortcuts (when not in editor)
+document.addEventListener('keydown', (e) => {
+  if (e.target === editorEl) return;
+  if (e.key === 'n' || e.key === 'N') { stepBtn.click(); }
+  if (e.key === ' ') { e.preventDefault(); playBtn.click(); }
+});
+</script>
+</body>
+</html>
